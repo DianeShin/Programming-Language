@@ -1,0 +1,445 @@
+if null resultBoardList
+                      then showBoard $ generateBoard reseed
+                      else showBoard $ resultBoardList !! (fst $ (randomR (0, length(tail resultBoardList) :: Int) initGen))
+                      where initGen = mkStdGen $ fromIntegral seed
+                            board = generateBoard $ mkStdGen $ fromIntegral seed
+                            resultBoardList = reverseMove n [board]
+                            reseed = snd $ randomR (23, 234::Int) initGen
+
+reverseMoveInside :: [Board] -> [Board]
+reverseMoveInside [] = []
+reverseMoveInside (b:bs) = pawnRecursionRev 0 b ++ (reverseMoveInside bs)
+
+reverseMoveN :: Integer -> [Board] -> [Board]
+reverseMoveN 0 bs = []
+reverseMoveN n bs = if (length bs) > 20
+                    then reverseMoveN (n-1) (reverseMoveInside reducedList)
+                    else reverseMoveN (n-1) (reverseMoveInside bs)
+                    where reducedList = bs
+                    -- everyNth (toInteger((length bs)/20)) bs
+--toInteger((length bs)/20)
+
+module Lib
+  ( generateGame
+  , simulateGame
+  , countGames
+  ) where
+
+import System.IO
+import Control.Monad
+import System.Random
+import Data.List
+import System.Random.Stateful
+
+-- ==================== DATA DEFINITION
+data Card = Card {name :: String, moves :: [(Integer, Integer)]} deriving (Eq)
+data Board = Board {cards :: [Card], pOnePawns :: [(Integer, Integer)], pTwoPawns :: [(Integer, Integer)], turn :: Integer, pOneSuper :: Bool, pTwoSuper :: Bool, winFlag :: Bool} deriving (Eq)
+data Move = Move {prevPosition :: (Integer, Integer), afterPosition :: (Integer, Integer), usedCard :: Card, superFlag :: Bool, stringRep :: String} deriving (Eq)
+
+-- ==================== CARD DATABASE + for p1, - for p2
+cardTiger = Card {name = "Tiger", moves = [(2, 0), (-1, 0)]}
+cardDragon = Card {name = "Dragon", moves = [(1, 2) , (1, -2), (-1, 1), (-1, -1)]}
+cardFrog = Card {name = "Frog", moves = [(1, -1), (0, -2), (-1, 1)]}
+cardRabbit = Card {name = "Rabbit", moves = [(1, 1), (0, 2), (-1, -1)]}
+cardCrab = Card {name = "Crab", moves = [(1, 0), (0, 2), (0, -2)]}
+cardElephant = Card {name = "Elephant", moves = [(1, 1), (1, -1), (0, 1), (0, -1)]}
+cardGoose = Card {name = "Goose", moves = [(1, -1), (0, 1), (0, -1), (-1, 1)]}
+cardRooster = Card {name = "Rooster", moves = [(1, 1), (0, 1), (0, -1), (-1, -1)]}
+cardMonkey = Card {name = "Monkey", moves = [(1, 1), (1, -1), (-1, 1), (-1, -1)]}
+cardMantis = Card {name = "Mantis", moves = [(1, 1), (1, -1), (-1, 0)]}
+cardHorse = Card {name = "Horse", moves = [(1, 0), (0, -1), (-1, 0)]}
+cardOx = Card {name = "Ox", moves = [(1, 0), (0, 1), (-1, 0)]}
+cardCrane = Card {name = "Crane", moves = [(1, 0), (-1, 1), (-1, -1)]}
+cardBoar = Card {name = "Boar", moves = [(1, 0), (0, 1), (0, -1)]}
+cardEel = Card {name = "Eel", moves = [(1, -1), (0, 1), (-1, -1)]}
+cardCobra = Card {name = "Cobra", moves = [(1, 1), (0, -1), (-1, 1)]}
+superMoves = [(1, 1), (1, 0), (1, -1), (0, 1), (0,-1), (-1, 1), (-1, 0), (-1, -1)]
+cardDatabase = [cardTiger, cardDragon, cardFrog, cardRabbit, cardCrab, cardElephant, cardGoose, cardRooster, cardMonkey, cardMantis, cardHorse, cardOx, cardCrane, cardBoar, cardEel, cardCobra]
+
+-- ==================== ERROR DATABASE
+cardError = Card {name = "ERROR", moves = []}
+moveError = Move {prevPosition = (0,0), afterPosition = (0,0), usedCard = cardError, superFlag = False, stringRep = ""}
+boardError = Board {cards = [cardError], pOnePawns = [], pTwoPawns = [], turn = 0, pOneSuper = False, pTwoSuper = False, winFlag = False}
+
+-- ==================== HELPER FUNCTIONS
+zipWithPair :: (Integer -> Integer -> Integer) -> (Integer, Integer) -> (Integer, Integer) -> (Integer, Integer)
+zipWithPair f a b = (f (fst a) (fst b), f (snd a) (snd b))
+
+swap :: Int -> Int -> [a] -> [a]
+swap i j l = (take i l) ++ [l !! j] ++ (drop (i+1) (take j l)) ++ [l !! i] ++ drop (j+1) l
+
+removeDuplicates :: (Eq a) => [a] -> [a]
+removeDuplicates [] = []
+removeDuplicates (x:xs) = if (elem x xs) then (removeDuplicates xs) else ([x] ++ removeDuplicates xs)
+
+-- ==================== SHOW METHODS
+showCards :: [Card] -> String
+showCards (x:xs)
+  | null xs == True = "\"" ++ name x ++ "\""
+  | otherwise = "\"" ++ name x ++ "\"," ++ showCards xs
+
+showCardsComplete :: [Card] -> String
+showCardsComplete x = "[" ++ showCards x ++ "]"
+
+showBoard :: Board -> String
+showBoard b = "(" ++ showCardsComplete (cards b) ++ "," ++ show (pOnePawns b) ++ ","
+              ++ show (pTwoPawns b) ++ "," ++ show (turn b) ++ "," ++ show (pOneSuper b) ++ "," ++ show (pTwoSuper b) ++ ")"
+
+-- ==================== CHECK FUNCTIONS
+checkSuperValidity :: Move -> Board -> Bool
+checkSuperValidity m b 
+  | (superFlag m == True) && (turn b == 0) && (pOneSuper b == True) = False
+  | (superFlag m == True) && (turn b == 1) && (pTwoSuper b == True) = False
+  | otherwise = True
+
+checkMoveValidity :: Integer -> Move -> Board -> Bool
+checkMoveValidity t m b
+  | checkSuperValidity m b == False = False
+  | winFlag b = False
+  | elem (usedCard m) (cards b) == False = False
+  | (fst $ afterPosition m) < 0 = False
+  | (fst $ afterPosition m) > 4 = False 
+  | (snd $ afterPosition m) < 0 = False
+  | (snd $ afterPosition m) > 4 = False
+  | (t == 0) && (elem (usedCard m) (take 2 (cards b)) == False) = False
+  | (t == 1) && (elem (usedCard m) (take 2 (drop 2 (cards b))) == False) = False
+  | (t == 0) && (elem (afterPosition m) (pOnePawns b)) = False
+  | (t == 1) && (elem (afterPosition m) (pTwoPawns b)) = False
+  | (t == 0) && ((elem (prevPosition m) (pOnePawns b)) == False) = False
+  | (t == 1) && ((elem (prevPosition m) (pTwoPawns b)) == False) = False  
+  | (superFlag m) = if elem (zipWithPair (-) (afterPosition m) (prevPosition m)) superMoves then True else False
+  | t == 0 = elem (zipWithPair (-) (afterPosition m) (prevPosition m)) (moves $ usedCard m)
+  | t == 1 = elem (zipWithPair (-) (prevPosition m) (afterPosition m)) (moves $ usedCard m)  
+
+checkInvalidState :: Board -> Bool
+checkInvalidState b
+  | elem True (map (<0) (map (fst) (pOnePawns b))) = False
+  | elem True (map (<0) (map (snd) (pOnePawns b))) = False
+  | elem True (map (<0) (map (fst) (pTwoPawns b))) = False
+  | elem True (map (<0) (map (snd) (pTwoPawns b))) = False
+  | (null $ intersect (pOnePawns b) (pTwoPawns b)) == False = False
+  | (length $ pOnePawns b) > 5 = False
+  | (length $ pTwoPawns b) > 5 = False
+  | (cards b) /= (filter(\x -> elem x cardDatabase) (cards b)) = False
+  | otherwise = True
+
+checkInvalidFormatBoard :: Board -> Bool
+checkInvalidFormatBoard b 
+  | ((name ((cards b) !! 0))>(name ((cards b) !! 1))) || ((name ((cards b) !! 2))>(name ((cards b) !! 3))) = False
+  | (tail $ pOnePawns b) /= (sort (tail $ pOnePawns b)) = False
+  | (tail $ pTwoPawns b) /= (sort (tail $ pTwoPawns b)) = False  
+  | otherwise = True
+
+checkInvalidFormat :: Board -> Move -> Bool
+checkInvalidFormat b t
+  | t == moveError = False
+  | ((name ((cards b) !! 0))>(name ((cards b) !! 1))) || ((name ((cards b) !! 2))>(name ((cards b) !! 3))) = False
+  | (tail $ pOnePawns b) /= (sort (tail $ pOnePawns b)) = False
+  | (tail $ pTwoPawns b) /= (sort (tail $ pTwoPawns b)) = False  
+  | otherwise = True
+
+-- ==================== SET FUNCTIONS
+setCardspOne :: Card -> [Card] -> [Card]
+setCardspOne a b
+  | ((name a) == name (b !! 0)) && (name (b !! 1) > name (b !! 4)) = swap 0 4 b
+  | ((name a) == name (b !! 0)) && (name (b !! 1) < name (b !! 4)) = swap 0 1 (swap 0 4 b)
+  | ((name a) == name (b !! 1)) && (name (b !! 0) < name (b !! 4)) = swap 1 4 b
+  | ((name a) == name (b !! 1)) && (name (b !! 0) > name (b !! 4)) = swap 0 1 (swap 1 4 b)
+
+
+setCardspTwo :: Card -> [Card] -> [Card]
+setCardspTwo a b
+  | ((name a) == name (b !! 2)) && (name (b !! 3) > name (b !! 4)) = swap 2 4 b
+  | ((name a) == name (b !! 2)) && (name (b !! 3) < name (b !! 4)) = swap 2 3 (swap 2 4 b)
+  | ((name a) == name (b !! 3)) && (name (b !! 2) < name (b !! 4)) = swap 3 4 b
+  | ((name a) == name (b !! 3)) && (name (b !! 2) > name (b !! 4)) = swap 2 3 (swap 3 4 b)
+
+
+setPawnsMy :: Move -> [(Integer, Integer)] -> [(Integer, Integer)]
+setPawnsMy m p
+  | (head p) == (prevPosition m) = [(afterPosition m)] ++ (tail p)
+  | otherwise = [(head p)] ++ sort((filter(\x -> x /= (prevPosition m)) (tail p)) ++ [(afterPosition m)])
+
+setPawnsOpp :: Integer -> (Integer, Integer) -> (Integer, Integer) -> [(Integer, Integer)] -> [(Integer, Integer)]
+setPawnsOpp t pHead p xs
+  | (t == 0) && (pHead == (4,2)) = []
+  | (t == 1) && (pHead == (0,2)) = [] 
+  | (p == (head xs)) = []
+  | otherwise = filter (\n -> n /= p) xs
+
+-- ==================== simulateGameAux DEFINITION
+simulateGameAux :: Board -> [Move] -> String
+simulateGameAux b []
+  | ((name $ head $ cards b) == (name cardError)) = "InvalidFormat"
+  | (length $ cards b) /= 5 = "InvalidState"
+  | ((length $ pOnePawns b) == 0 || (length $ pTwoPawns b) == 0) = "InvalidState"
+  | checkInvalidFormatBoard b == False = "InvalidFormat"
+  | checkInvalidState b == False = "InvalidState"
+  | otherwise = showBoard b
+simulateGameAux b (x:xs)
+  | ((name $ head $ cards b) == (name cardError)) = "InvalidFormat"
+  | (length $ cards b) /= 5 = "InvalidState"
+  | (length $ pOnePawns b) == 0 || (length $ pTwoPawns b) == 0 = "InvalidState"
+  | checkInvalidFormat b x == False = "InvalidFormat"
+  | checkInvalidState b == False = "InvalidState"
+  | checkMoveValidity (turn b) x b == False = "InvalidMove " ++ (stringRep x)
+  | (turn b == 0) && (superFlag x == True) = simulateGameAuxRec (Board {cards = setCardspOne (usedCard x) (cards b), pOnePawns = turnZeroNewPOne, pTwoPawns = turnZeroNewPTwo, turn = 1, pOneSuper = True, pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPTwo)}) xs
+  | (turn b == 0) && (superFlag x == False) = simulateGameAuxRec (Board {cards = setCardspOne (usedCard x) (cards b), pOnePawns = turnZeroNewPOne, pTwoPawns =  turnZeroNewPTwo, turn = 1, pOneSuper = (pOneSuper b), pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPTwo)}) xs
+  | (turn b == 1) && (superFlag x == True) = simulateGameAuxRec (Board {cards = setCardspTwo (usedCard x) (cards b), pOnePawns = turnOneNewPOne, pTwoPawns = turnOneNewPTwo, turn = 0, pOneSuper = (pOneSuper b), pTwoSuper = True, winFlag = (null turnOneNewPOne)}) xs
+  | (turn b == 1) && (superFlag x == False) = simulateGameAuxRec (Board {cards = setCardspTwo (usedCard x) (cards b), pOnePawns = turnOneNewPOne, pTwoPawns = turnOneNewPTwo, turn = 0, pOneSuper = (pOneSuper b), pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPOne)}) xs
+  where turnZeroNewPOne = setPawnsMy x (pOnePawns b)
+        turnZeroNewPTwo = setPawnsOpp 0 (head turnZeroNewPOne) (afterPosition x) (pTwoPawns b)
+        turnOneNewPOne = setPawnsOpp 1 (head turnOneNewPTwo) (afterPosition x) (pOnePawns b)
+        turnOneNewPTwo = setPawnsMy x (pTwoPawns b)
+
+simulateGameAuxRec :: Board -> [Move] -> String
+simulateGameAuxRec b [] = showBoard b
+simulateGameAuxRec b (x:xs)
+  | checkMoveValidity (turn b) x b == False = "InvalidMove " ++ (stringRep x)
+  | (turn b == 0) && (superFlag x == True) = simulateGameAuxRec (Board {cards = setCardspOne (usedCard x) (cards b), pOnePawns = turnZeroNewPOne, pTwoPawns = turnZeroNewPTwo, turn = 1, pOneSuper = True, pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPTwo)}) xs
+  | (turn b == 0) && (superFlag x == False) = simulateGameAuxRec (Board {cards = setCardspOne (usedCard x) (cards b), pOnePawns = turnZeroNewPOne, pTwoPawns =  turnZeroNewPTwo, turn = 1, pOneSuper = (pOneSuper b), pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPTwo)}) xs
+  | (turn b == 1) && (superFlag x == True) = simulateGameAuxRec (Board {cards = setCardspTwo (usedCard x) (cards b), pOnePawns = turnOneNewPOne, pTwoPawns = turnOneNewPTwo, turn = 0, pOneSuper = (pOneSuper b), pTwoSuper = True, winFlag = (null turnOneNewPOne)}) xs
+  | (turn b == 1) && (superFlag x == False) = simulateGameAuxRec (Board {cards = setCardspTwo (usedCard x) (cards b), pOnePawns = turnOneNewPOne, pTwoPawns = turnOneNewPTwo, turn = 0, pOneSuper = (pOneSuper b), pTwoSuper = (pTwoSuper b), winFlag = (null turnZeroNewPOne)}) xs
+  where turnZeroNewPOne = setPawnsMy x (pOnePawns b)
+        turnZeroNewPTwo = setPawnsOpp 0 (head turnZeroNewPOne) (afterPosition x) (pTwoPawns b)
+        turnOneNewPOne = setPawnsOpp 1 (head turnOneNewPTwo) (afterPosition x) (pOnePawns b)
+        turnOneNewPTwo = setPawnsMy x (pTwoPawns b)
+
+-- ==================== stringToData FUNCTIONS
+
+stringToCard s 
+  | null (filter(\x -> s == (name x)) cardDatabase) /= True = head $ filter(\x -> s == (name x)) cardDatabase
+  | otherwise = cardError
+
+stringToMove s 
+  | null first = moveError
+  | null second = moveError
+  | isPrefixOf "Super " third = Move {prevPosition = fst $ head $ first, afterPosition = fst $ head $ second, usedCard = stringToCard $ (drop 6 third), superFlag = True, stringRep = s}
+  | otherwise = Move {prevPosition = fst $ head $ first, afterPosition = fst $ head $ second, usedCard = stringToCard third, superFlag = False, stringRep = s}
+  where first = reads (take ((length (tail s))-1) (tail s)) :: [((Integer,Integer), String)]
+        second = reads (tail $ snd $ head first) :: [((Integer,Integer), String)]
+        third = (init $ tail $ tail $ snd $ head second)
+
+stringToBoard s
+  | null first = boardError
+  | null second = boardError
+  | null third = boardError
+  | null fourth = boardError
+  | null fifth = boardError
+  | null sixth = boardError
+  | otherwise = Board {cards = cardList, pOnePawns = fst $ head second, pTwoPawns = fst $ head third, turn = fst $ head fourth, pOneSuper = fst $ head fifth, pTwoSuper = fst $ head sixth, winFlag =  (null $ fst $ head second) || (null $ fst $ head third)}
+  where first = reads (take ((length (tail $ s)) -1) (tail $ s)) :: [([String], String)]
+        second = reads (tail $ snd $ head first) :: [([(Integer, Integer)], String)]
+        third = reads (tail $ snd $ head second) :: [([(Integer, Integer)], String)]
+        fourth = reads (tail $ snd $ head third) :: [(Integer, String)]
+        fifth = reads (tail $ snd $ head fourth) :: [(Bool, String)]
+        sixth = reads (tail $ snd $ head fifth) :: [(Bool, String)]
+        cardList = map (stringToCard) (fst $ head first)
+
+-- ==================== simulateGame DEFINITION
+simulateGame :: FilePath -> IO String
+simulateGame path = do content <- (readFile path)
+                       let fileList = lines content
+                       let board = if (null fileList)
+                                   then boardError
+                                   else stringToBoard $ head fileList
+                       let moveList = if (null fileList)
+                                      then []
+                                      else map (stringToMove) (tail fileList)
+                       let result = simulateGameAux board moveList
+                       return result
+
+-- =================== randomFunction DEFINITION
+generateRandomWinner ::  StdGen -> Int
+generateRandomWinner a = fst $ randomR (0,1 :: Int) a
+
+generateRandomCard :: Integer -> [Card] -> StdGen -> [Card]
+generateRandomCard 0 b a = sortedpOne ++ sortedpTwo ++ [(b !! 4)]
+                           where sortedpOne = if name (b !! 0) > name (b !! 1)
+                                              then reverse $ take 2 b
+                                              else take 2 b
+                                 sortedpTwo = if name (b !! 2) > name (b !! 3)
+                                              then reverse $ take 2 $ drop 2 b
+                                              else take 2 $ drop 2 b
+generateRandomCard n b a = if (elem (cardDatabase !! (fst $ value)) b)
+                           then generateRandomCard n b (snd value)
+                           else generateRandomCard (n-1) (b ++[cardDatabase !! (fst $ value)]) (snd value)
+                           where value = randomR (0,15 :: Int) a
+
+generateNumberOfPawns ::  StdGen -> Int
+generateNumberOfPawns a = fst $ randomR(1,4 :: Int) a
+
+generateRandomPawn :: Int -> [(Integer,Integer)] ->  StdGen -> [(Integer,Integer)]
+generateRandomPawn 0 p a = p
+generateRandomPawn n p a = if (coord == (4,2)) || (coord == (0,2))
+                           then generateRandomPawn n p (snd second)
+                           else generateRandomPawn (n-1) (p ++ [coord]) (snd second)
+                           where first = randomR (0,4 :: Int) a
+                                 second = randomR (0,4 :: Int)  (snd first)
+                                 coord = (toInteger $ fst $ first, toInteger $ fst $ second)
+
+generatRandomSuper ::  StdGen -> Bool
+generatRandomSuper a = if (value == 1)
+                       then True
+                       else False
+                       where value = fst $ randomR (0,1 :: Int) a
+
+-- =================== moveGenerator DEFINTION
+checkPossibleMove :: Int -> Int -> Board -> Bool
+checkPossibleMove m p b
+  | m >= (length $ moves $ (cards b !! 4)) = False
+  | (turn b == 0) && elem pOnePawn ((pOnePawns b) ++ (pTwoPawns b)) = False
+  | (turn b == 1) && elem pTwoPawn ((pOnePawns b) ++ (pTwoPawns b)) = False
+  | (turn b == 0) && pOnePawn == (4,2) = False
+  | (turn b == 1) && pTwoPawn == (0,2) = False
+  | (turn b == 0) && (fst pOnePawn < 0 || fst pOnePawn > 4) = False
+  | (turn b == 1) && (fst pTwoPawn < 0 || fst pTwoPawn > 4) = False  
+  | (turn b == 0) && (snd pOnePawn < 0 || snd pOnePawn > 4) = False
+  | (turn b == 1) && (snd pTwoPawn < 0 || snd pTwoPawn > 4) = False  
+  | otherwise = True
+  where pOnePawn = zipWithPair (-) (pOnePawns b !! p) ((moves $ cards b !! 4)!! m)
+        pTwoPawn = zipWithPair (+) (pTwoPawns b !! p) ((moves $ cards b !! 4)!! m)
+
+setCardsRev :: Integer -> [Card] -> [Card]
+setCardsRev c l
+  | (c == 0) && ((name $ l !! 1) > (name $ l !! 4)) = swap 0 4 l
+  | (c == 0) && ((name $ l !! 1) < (name $ l !! 4)) = swap 0 1 (swap 0 4 l)
+  | (c == 1) && ((name $ l !! 0) > (name $ l !! 4)) = swap 0 1 (swap 1 4 l)
+  | (c == 1) && ((name $ l !! 0) < (name $ l !! 4)) = swap 1 4 l
+  | (c == 2) && ((name $ l !! 3) > (name $ l !! 4)) = swap 2 4 l
+  | (c == 2) && ((name $ l !! 3) < (name $ l !! 4)) = swap 2 3 (swap 2 4 l)
+  | (c == 3) && ((name $ l !! 2) > (name $ l !! 4)) = swap 2 3 (swap 3 4 l)
+  | (c == 3) && ((name $ l !! 2) < (name $ l !! 4)) = swap 3 4 l
+
+setPawnsRevpOne :: (Integer, Integer) -> Int -> [(Integer, Integer)] -> [(Integer, Integer)]
+setPawnsRevpOne m p l = init $ swap p (length l) l
+                        where movedPawn = zipWithPair (-) (l !! p) m
+                              tempList = l ++ [movedPawn]
+
+setPawnsRevpTwo :: (Integer, Integer) -> Int -> [(Integer, Integer)] -> [(Integer, Integer)]
+setPawnsRevpTwo m p l = init $ swap p (length l) l
+                        where movedPawn = zipWithPair (+) (l !! p) m
+                              tempList = l ++ [movedPawn]
+moveRecursionRev :: Int -> Int -> Board -> [Board]
+moveRecursionRev m p b
+  | (turn b == 0) && (checkPossibleMove m p b) = [boardOne, boardTwo] ++ moveRecursionRev (m+1) p b
+  | (turn b == 1) && (checkPossibleMove m p b) = [boardThree, boardFour] ++ moveRecursionRev (m+1) p b
+  | otherwise = []
+  where boardOne = Board {cards = setCardsRev 0 (cards b), pOnePawns = setPawnsRevpOne ((moves $ cards b !! 4)!! m) p (pOnePawns b), pTwoPawns = pTwoPawns b, turn = 1, pOneSuper = False, pTwoSuper = False, winFlag = False}
+        boardTwo = Board {cards = setCardsRev 1 (cards b), pOnePawns = setPawnsRevpOne ((moves $ cards b !! 4)!! m) p (pOnePawns b), pTwoPawns = pTwoPawns b, turn = 1, pOneSuper = False, pTwoSuper = False, winFlag = False}
+        boardThree = Board {cards = setCardsRev 2 (cards b), pOnePawns = pOnePawns b, pTwoPawns = setPawnsRevpTwo ((moves $ cards b !! 4)!! m) p (pTwoPawns b), turn = 0, pOneSuper = False, pTwoSuper = False, winFlag = False}
+        boardFour = Board {cards = setCardsRev 3 (cards b), pOnePawns = pOnePawns b, pTwoPawns = setPawnsRevpTwo ((moves $ cards b !! 4)!! m) p (pTwoPawns b), turn = 0, pOneSuper = False, pTwoSuper = False, winFlag = False}
+
+pawnRecursionRev :: Int -> Board -> [Board]
+pawnRecursionRev p b
+  | (turn b == 0) && ((length $ pOnePawns b) > p) = moveRecursionRev 0 p b ++ pawnRecursionRev (p+1) b
+  | (turn b == 1) && ((length $ pTwoPawns b) > p) = moveRecursionRev 0 p b ++ pawnRecursionRev (p+1) b
+  | otherwise = []
+
+-- =================== boardReverser DEFINITION
+reverseMove :: Integer -> [Board] -> [Board]
+reverseMove _ [] = []
+reverseMove 0 b = b
+reverseMove n (b:bs) = (reverseMove (n-1) (pawnRecursionRev 0 b)) ++ reverseMove n bs
+
+-- =================== generateGame DEFINITION
+generateBoard ::  StdGen -> Board
+generateBoard gen = if (winnerGen == 0)
+                      then Board {cards = cardListGen, pOnePawns = [(4,2)] ++ pOnePawnsSorted, pTwoPawns = pTwoPawnsSorted, turn = 0, pOneSuper = pOneSuperGen, pTwoSuper = pTwoSuperGen, winFlag = False }
+                      else Board {cards = cardListGen, pOnePawns = pOnePawnsSorted, pTwoPawns = [(0,2)] ++ pTwoPawnsSorted, turn = 1, pOneSuper = pOneSuperGen, pTwoSuper = pTwoSuperGen, winFlag = False }
+                      where winnerGen = generateRandomWinner gen
+                            genA = randomR (0,1::Int) gen
+                            cardListGen = generateRandomCard 5 [] (snd genA)
+                            genB = randomR (0,1::Int) (snd genA)
+                            pOnePawnsNumber = generateNumberOfPawns (snd genB)
+                            genC = randomR (0,1::Int) (snd genB)
+                            pTwoPawnsNumber = generateNumberOfPawns (snd genC)
+                            genD = randomR (0,1::Int) (snd genC)
+                            pOnePawnsGen = generateRandomPawn pOnePawnsNumber [] (snd genD)
+                            pOnePawnsSorted = [head pOnePawnsGen] ++ (sort $ tail $ pOnePawnsGen)
+                            genE = randomR (0,1::Int) (snd genD)
+                            pTwoPawnsGen = generateRandomPawn pTwoPawnsNumber [] (snd genE)
+                            pTwoPawnsSorted = [head pTwoPawnsGen] ++ (sort $ tail $ pTwoPawnsGen)
+                            genF = randomR (0,1::Int) (snd genE)
+                            pOneSuperGen = generatRandomSuper (snd genF)
+                            genG = randomR (0,1::Int) (snd genF)
+                            pTwoSuperGen = generatRandomSuper (snd genG)
+
+generateGame :: Integer -> Integer -> String
+generateGame seed n = showBoard $ generateBoard $ mkStdGen $ fromIntegral seed
+
+-- =================== recursion helper functions DEFINITION
+superRecursion :: Int -> Int -> Int -> Board -> [Board]
+superRecursion 8 c p b = []
+superRecursion n c p b
+  | (turn b == 0) && (pOneSuper b == False) = [boardOne] ++ superRecursion (n+1) c p b
+  | (turn b == 1) && (pTwoSuper b == False) = [boardTwo] ++ superRecursion (n+1) c p b 
+  | otherwise = []
+  where boardOne = if isPrefixOf "(" (simulateGameAux b [Move {prevPosition = (pOnePawns b !! p), afterPosition = zipWithPair (+) (pOnePawns b !! p) (superMoves !! n), usedCard = (cards b) !! c, superFlag = True, stringRep = ""}])
+                    then stringToBoard $ simulateGameAux b [Move {prevPosition = (pOnePawns b !! p), afterPosition = zipWithPair (+) (pOnePawns b !! p) (superMoves !! n), usedCard = (cards b) !! c, superFlag = True, stringRep = ""}]
+                    else b
+        boardTwo = if isPrefixOf "(" (simulateGameAux b [Move {prevPosition = (pTwoPawns b !! p), afterPosition = zipWithPair (-) (pTwoPawns b !! p) (superMoves !! n), usedCard = (cards b) !! (c+2), superFlag = True, stringRep = ""}])
+                    then stringToBoard $ simulateGameAux b [Move {prevPosition = (pTwoPawns b !! p), afterPosition = zipWithPair (-) (pTwoPawns b !! p) (superMoves !! n), usedCard = (cards b) !! (c+2), superFlag = True, stringRep = ""}]
+                    else b
+
+moveRecursion :: Int -> Int -> Int -> Board -> [Board]
+moveRecursion c m p b
+  | (turn b == 0) && ((length $ moves $ (cards b) !! c) > m) = [boardOne] ++ moveRecursion c (m+1) p b
+  | (turn b == 1) && ((length $ moves $ (cards b) !! (c+2)) > m) = [boardTwo] ++ moveRecursion c (m+1) p b
+  | otherwise = []
+  where boardOne = if isPrefixOf "(" (simulateGameAux b [Move {prevPosition = (pOnePawns b !! p), afterPosition = zipWithPair (+) (pOnePawns b !! p) ((moves $ cards b !! c) !! m), usedCard = (cards b) !! c, superFlag = False, stringRep = ""}])
+                    then stringToBoard $ simulateGameAux b [Move {prevPosition = (pOnePawns b !! p), afterPosition = zipWithPair (+) (pOnePawns b !! p) ((moves $ cards b !! c) !! m), usedCard = (cards b) !! c, superFlag = False, stringRep = ""}]
+                    else b
+        boardTwo = if isPrefixOf "(" (simulateGameAux b [Move {prevPosition = (pTwoPawns b !! p), afterPosition = zipWithPair (-) (pTwoPawns b !! p) ((moves $ cards b !! (c+2)) !! m), usedCard = (cards b) !! (c+2), superFlag = False, stringRep = ""}])
+                    then stringToBoard $ simulateGameAux b [Move {prevPosition = (pTwoPawns b !! p), afterPosition = zipWithPair (-) (pTwoPawns b !! p) ((moves $ cards b !! (c+2)) !! m), usedCard = (cards b) !! (c+2), superFlag = False, stringRep = ""}]
+                    else b
+
+cardRecursion :: Int -> Int -> Board -> [Board]
+cardRecursion c p b
+    | (c == 0) = moveRecursion c 0 p b ++ superRecursion 0 c p b ++ cardRecursion 1 p b 
+    | (c == 1) = moveRecursion c 0 p b ++ superRecursion 0 c p b
+
+pawnRecursion :: Int -> Board -> [Board]
+pawnRecursion p b
+    | winFlag b = [b]
+    | (turn b == 0) && ((length $ pOnePawns b) > p) = cardRecursion 0 p b ++ pawnRecursion (p+1) b
+    | (turn b == 1) && ((length $ pTwoPawns b) > p) = cardRecursion 0 p b ++ pawnRecursion (p+1) b
+    | otherwise = []
+
+totalBoardCalculation :: Int -> [Board] -> [Board]
+totalBoardCalculation n [] = []
+totalBoardCalculation 0 b = b
+totalBoardCalculation n (b:bs) = if ((length $ removeDuplicates $ pawnCalculation) == 1) && (elem b (removeDuplicates $ pawnCalculation))
+                                 then [b] ++ totalBoardCalculation n bs
+                                 else (totalBoardCalculation (n-1) (filter (\x -> x /= b) pawnCalculation)) ++ (totalBoardCalculation n bs)
+                                 where pawnCalculation = pawnRecursion 0 b
+
+-- ==================== result calculation helper functions DEFINITION
+calculatepOneWin :: [Board] -> Int
+calculatepOneWin [] = 0
+calculatepOneWin (b:bs)
+    | null $ pTwoPawns b = 1 + calculatepOneWin bs
+    | otherwise = calculatepOneWin bs
+
+calculatepTwoWin :: [Board] -> Int
+calculatepTwoWin [] = 0
+calculatepTwoWin (b:bs)
+    | null $ pOnePawns b = 1 + calculatepTwoWin bs
+    | otherwise = calculatepTwoWin bs
+
+-- ==================== countGames DEFINITION
+countGames :: Integer -> FilePath -> IO String
+countGames n path = do content <- (readFile path)
+                       let fileList = lines content
+                       let tempBoard = if (null fileList)
+                                   then boardError 
+                                   else stringToBoard $ head fileList
+                       let board = if (tempBoard /= boardError) && (checkInvalidFormatBoard tempBoard == False)
+                                   then boardError
+                                   else tempBoardlet totalBoard = if n == 0 
+                                        then [board]
+                                        else totalBoardCalculation (fromIntegral n) [board]
+                       let result = if board == boardError 
+                                    then "InvalidFormat"
+                                    else "(" ++ (show $ length totalBoard) ++ "," ++ (show $ calculatepOneWin totalBoard) ++ "," ++ (show $ calculatepTwoWin totalBoard) ++ ")"
+                       return result
