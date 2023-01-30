@@ -24,6 +24,3 @@ I scanned through the expressions that aren't being covered and discovered these
 1. Since it's my first time programming without loops, thinking about a high level image of simulateGame was easy yet changing it to a recursive manner was a challenge. Though thinking about single loop conversion to recursive manner, increasing the number of loops one by one, I was able to convert nested loops into recursion.
 2. Random functions were quite hard to apply. Especially since generateGame was a pure function. I went all the journey of using randomRIO, realizing pure and impure functions are not recommended to mix, discovering randomR exists, then facing syntax issues, mixing up all the example codes online, then getting something out of it. It was quite challenging since haskell lacks examples and prior questions, it was pretty much trial and error.
 
-<Explanation for the server log>
-just mentioning since the server told me that my attempt was logged(I was just changing the submission numbers from the url), it was out of curiosity since I noticed the url is made very straight forward, and wanted to see what happens if I scan through. Will not do it again though.
-
